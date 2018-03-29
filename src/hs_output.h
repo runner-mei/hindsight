@@ -13,7 +13,11 @@
 #include "hs_config.h"
 
 #include <luasandbox/lua.h>
+#ifdef _WIN32
+#include "win_pthread.h"
+#else
 #include <pthread.h>
+#endif
 #include <stdio.h>
 
 typedef struct hs_output

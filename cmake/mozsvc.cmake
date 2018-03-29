@@ -7,10 +7,10 @@ if(MSVC)
     # Compiler options: http://msdn.microsoft.com/en-us/library/fwkeyyhe.aspx
 
     # set a high warning level and treat them as errors
-    set(CMAKE_C_FLAGS           "/W3 /WX")
+    set(CMAKE_C_FLAGS           "/W3 /WX /wd4996")
 
     # debug multi threaded dll runtime, complete debugging info, runtime error checking
-    set(CMAKE_C_FLAGS_DEBUG     "/MDd /Zi /RTC1")
+    set(CMAKE_C_FLAGS_DEBUG     "/MDd /Zi")
 
     # multi threaded dll runtime, optimize for speed, auto inlining
     set(CMAKE_C_FLAGS_RELEASE   "/MD /O2 /Ob2")

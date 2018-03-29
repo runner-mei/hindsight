@@ -10,7 +10,11 @@
 
 #include <assert.h>
 #include <ctype.h>
+#ifdef _WIN32
+#include "win_dirent.h"
+#else
 #include <dirent.h>
+#endif
 #include <errno.h>
 #include <luasandbox.h>
 #include <luasandbox/heka/sandbox.h>
@@ -18,14 +22,20 @@
 #include <luasandbox/util/protobuf.h>
 #include <luasandbox/util/running_stats.h>
 #include <luasandbox_output.h>
+#ifdef _WIN32
+#include "win_pthread.h"
+#include "win_sem.h"
+#else
 #include <pthread.h>
 #include <semaphore.h>
+#endif
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
+#ifndef _WIN32
 #include <unistd.h>
-
+#endif
 #include "hs_input.h"
 #include "hs_logger.h"
 #include "hs_output.h"
@@ -297,7 +307,7 @@ static int output_message(hs_output_plugin *p, lsb_heka_message *msg,
   if (sample) {
     pthread_mutex_lock(&p->cp_lock);
     if (mmdelta) {
-      lsb_update_running_stats(&p->mms, mmdelta);
+      lsb_update_running_stats(&p->mms, (double)mmdelta);
     }
     p->stats = lsb_heka_get_stats(p->hsb);
     p->sample = false;
@@ -461,7 +471,11 @@ static void* input_thread(void *arg)
           const char *err = lsb_heka_get_error(p->hsb);
           hs_log(NULL, p->name, 7, "retry message %llu err: %s", p->sequence_id,
                  err);
+#ifdef _WIN32
+          Sleep(1000);
+#else
           sleep(1);
+#endif
           ret = output_message(p, msg, false, current_t);
           if (ret == LSB_HEKA_PM_RETRY) {
             pthread_mutex_lock(&p->cp_lock);
@@ -490,7 +504,11 @@ static void* input_thread(void *arg)
         pthread_mutex_unlock(&p->cp_lock);
       }
       msg = NULL;
+#ifdef _WIN32
+      Sleep(1000);
+#else
       sleep(1);
+#endif // _WIN32
     }
   }
 
@@ -537,13 +555,18 @@ static void* input_thread(void *arg)
     }
     if (p->shutdown_terminate) {
       hs_log(NULL, p->name, 6, "shutting down on terminate");
-      kill(getpid(), SIGTERM);
+#ifdef _WIN32
+    ExitProcess(EXIT_FAILURE);
+#else
+    kill(getpid(), SIGTERM);
+#endif
     }
     destroy_output_plugin(p);
     --plugins->list_cnt;
     pthread_mutex_unlock(&plugins->list_lock);
   }
   pthread_exit(NULL);
+  return NULL;
 }
 
 

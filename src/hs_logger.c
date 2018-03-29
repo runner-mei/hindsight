@@ -8,7 +8,12 @@
 
 #include "hs_logger.h"
 
+#ifdef _WIN32
+#include "win_pthread.h"
+#include "win_sem.h"
+#else
 #include <pthread.h>
+#endif
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>

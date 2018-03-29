@@ -14,7 +14,11 @@
 #include "hs_checkpoint_reader.h"
 #include "hs_config.h"
 
+#ifdef _WIN32
+#include "win_pthread.h"
+#else
 #include <pthread.h>
+#endif
 #include <stdio.h>
 #include <stdbool.h>
 

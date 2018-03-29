@@ -379,7 +379,11 @@ void hs_write_checkpoints(hs_checkpoint_writer *cpw, hs_checkpoint_reader *cpr)
   cpi.tsv_error = false;
 
   if (cpi.sample) { // write the stats after the sample
+#ifdef _WIN32
+    cpi.utsv = fopen(cpw->utsv_path_tmp, "w");
+#else
     cpi.utsv = fopen(cpw->utsv_path_tmp, "we");
+#endif
     if (cpi.utsv) {
       fprintf(cpi.utsv, "Plugin\tMessages Processed\t"
               "%% Utilization\t%% Message Matcher\t"
@@ -387,7 +391,11 @@ void hs_write_checkpoints(hs_checkpoint_writer *cpw, hs_checkpoint_reader *cpr)
               "\n");
     }
 
+#ifdef _WIN32
+    cpi.ptsv = fopen(cpw->ptsv_path_tmp, "w");
+#else
     cpi.ptsv = fopen(cpw->ptsv_path_tmp, "we");
+#endif
     if (cpi.ptsv) {
       fprintf(cpi.ptsv, "Plugin\t"
               "Inject Message Count\tInject Message Bytes\t"
@@ -430,7 +438,11 @@ void hs_write_checkpoints(hs_checkpoint_writer *cpw, hs_checkpoint_reader *cpr)
 
   if (++cpi.sample_cnt == 60) cpi.sample_cnt = 0;
 
+#ifdef _WIN32
+  FILE *cp = fopen(cpw->cp_path_tmp, "w");
+#else 
   FILE *cp = fopen(cpw->cp_path_tmp, "we");
+#endif
   if (!cp) {
     hs_log(NULL, g_module, 0, "%s: %s", cpw->cp_path_tmp, strerror(errno));
     exit(EXIT_FAILURE);

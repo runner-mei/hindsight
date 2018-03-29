@@ -8,17 +8,26 @@
 
 #include <errno.h>
 #include <luasandbox/lauxlib.h>
+#ifdef _WIN32
+#include "win_pthread.h"
+#include "win_sem.h"
+#else
 #include <pthread.h>
-#include <sched.h>
 #include <semaphore.h>
+#include <sched.h>
+#endif
 #include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
 #include <sys/inotify.h>
+#endif
 #include <time.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 
 #include "hs_analysis_plugins.h"
 #include "hs_checkpoint_writer.h"
@@ -30,8 +39,107 @@
 
 
 static const char g_module[] = "hindsight";
-static sem_t g_shutdown;
 
+#ifdef _WIN32
+static HANDLE g_iocp;
+
+#define IOCP_WEVENT_LOAD_PATH_INPUT    1
+#define IOCP_WEVENT_LOAD_PATH_ANALYSIS 2
+#define IOCP_WEVENT_LOAD_PATH_OUTPUT   3
+#define IOCP_WEVENT_SHUTDOWN           4
+
+typedef struct _watcher {
+  OVERLAPPED             overlapped;
+  int                    eventId;
+} watcher_t;
+
+#define MAX_BUFF_SIZE  100
+typedef struct _fsevent {
+  watcher_t               w;
+  FILE_NOTIFY_INFORMATION data[MAX_BUFF_SIZE];
+  DWORD                   notifyFilters;
+  DWORD                   bytesReturned;
+  HANDLE                  handle;
+} fsevent_t;
+
+typedef struct _shutdownEvent {
+	watcher_t  w;
+} shutdownEvent_t;
+
+bool createWatchFile(HANDLE iocp, const char* file, fsevent_t *fileHandle) {
+  memset(fileHandle, 0, sizeof(fsevent_t));
+
+  fileHandle->handle = CreateFileA(file, GENERIC_READ | FILE_LIST_DIRECTORY,
+    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+    NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED,
+    NULL);
+  if (fileHandle->handle == INVALID_HANDLE_VALUE || fileHandle->handle == NULL) {
+    return false;
+  }
+  if (CreateIoCompletionPort(fileHandle->handle, iocp, (ULONG_PTR)fileHandle->handle, 1) == NULL) {
+    DWORD errCode = GetLastError();
+    CloseHandle(fileHandle->handle);
+    SetLastError(errCode);
+    return false;
+  }
+
+  fileHandle->notifyFilters = FILE_NOTIFY_CHANGE_FILE_NAME |
+    FILE_NOTIFY_CHANGE_DIR_NAME |
+    FILE_NOTIFY_CHANGE_SIZE |
+    FILE_NOTIFY_CHANGE_LAST_WRITE |
+	FILE_NOTIFY_CHANGE_CREATION;
+  return true;
+}
+
+void closeWatch(fsevent_t *fileHandle) {
+	CloseHandle(fileHandle->handle);
+}
+
+bool readFs(fsevent_t *evt) {
+  evt->bytesReturned = 0;
+  memset(&evt->w.overlapped, 0, sizeof(OVERLAPPED));
+
+  return ReadDirectoryChangesW(evt->handle,
+    evt->data,
+    MAX_BUFF_SIZE * sizeof(FILE_NOTIFY_INFORMATION),
+    TRUE,
+    evt->notifyFilters,
+    &evt->bytesReturned,
+    &evt->w.overlapped,
+    NULL);
+}
+
+
+
+BOOL CtrlHandler(DWORD fdwCtrlType) {
+	shutdownEvent_t *evt;
+	switch (fdwCtrlType) {
+	case CTRL_C_EVENT:
+		evt = (shutdownEvent_t*)calloc(1, sizeof(shutdownEvent_t));
+		evt->w.eventId = IOCP_WEVENT_SHUTDOWN;
+		PostQueuedCompletionStatus(g_iocp, 1, 0, (LPOVERLAPPED)evt);
+		return TRUE;
+	case CTRL_CLOSE_EVENT:
+		evt = (shutdownEvent_t*)calloc(1, sizeof(shutdownEvent_t));
+		evt->w.eventId = IOCP_WEVENT_SHUTDOWN;
+		PostQueuedCompletionStatus(g_iocp, 1, 0, (LPOVERLAPPED)evt);
+		return TRUE;
+	case CTRL_BREAK_EVENT:
+		evt = (shutdownEvent_t*)calloc(1, sizeof(shutdownEvent_t));
+		evt->w.eventId = IOCP_WEVENT_SHUTDOWN;
+		PostQueuedCompletionStatus(g_iocp, 1, 0, (LPOVERLAPPED)evt);
+		return TRUE;
+	case CTRL_SHUTDOWN_EVENT:
+		evt = (shutdownEvent_t*)calloc(1, sizeof(shutdownEvent_t));
+		evt->w.eventId = IOCP_WEVENT_SHUTDOWN;
+		PostQueuedCompletionStatus(g_iocp, 1, 0, (LPOVERLAPPED)evt);
+		return TRUE;
+	default:
+		return FALSE;
+	}
+}
+#else
+static sem_t g_shutdown;
 
 void* sig_handler(void *arg)
 {
@@ -68,6 +176,8 @@ void* sig_handler(void *arg)
   return (void *)0;
 }
 
+#endif
+
 
 int main(int argc, char *argv[])
 {
@@ -76,6 +186,12 @@ int main(int argc, char *argv[])
     return EXIT_FAILURE;
   }
 
+#ifdef _WIN32
+  if (!(g_iocp = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 1))) {
+    printf("ERROR: create completionPort failed, %s.\n", w32_error(GetLastError()));
+    return EXIT_FAILURE;
+  }
+#else
   if (sem_init(&g_shutdown, 0, 1)) {
     perror("g_shutdown sem_init failed");
     return EXIT_FAILURE;
@@ -85,6 +201,7 @@ int main(int argc, char *argv[])
     perror("g_shutdown sem_wait failed");
     return EXIT_FAILURE;
   }
+#endif
 
   int loglevel = 6;
   if (argc == 3) {
@@ -99,7 +216,28 @@ int main(int argc, char *argv[])
   if (hs_load_config(argv[1], &cfg)) {
     return EXIT_FAILURE;
   }
+#ifdef _WIN32
+  fsevent_t dirHandles[3];
+  if (cfg.load_path[0] != 0) {
+    if (!createWatchFile(g_iocp, cfg.load_path_input, &dirHandles[0])) {
+      printf("ERROR: watch '%s' failed, %s.\n", cfg.load_path_input, w32_error(GetLastError()));
+      return EXIT_FAILURE;
+    }
+    dirHandles[0].w.eventId = IOCP_WEVENT_LOAD_PATH_INPUT;
 
+    if (!createWatchFile(g_iocp, cfg.load_path_analysis, &dirHandles[1])) {
+      printf("ERROR: watch '%s' failed, %s.\n", cfg.load_path_analysis, w32_error(GetLastError()));
+      return EXIT_FAILURE;
+    }
+    dirHandles[1].w.eventId = IOCP_WEVENT_LOAD_PATH_ANALYSIS;
+
+    if (!createWatchFile(g_iocp, cfg.load_path_output, &dirHandles[2])) {
+      printf("ERROR: watch '%s' failed, %s.\n", cfg.load_path_output, w32_error(GetLastError()));
+      return EXIT_FAILURE;
+    }
+    dirHandles[2].w.eventId = IOCP_WEVENT_LOAD_PATH_OUTPUT;
+  }
+#else
   int watch[3] = {0};
   int load = 0;
   if (cfg.load_path[0] != 0) {
@@ -139,12 +277,19 @@ int main(int argc, char *argv[])
       return EXIT_FAILURE;
     }
   }
-
+#endif
   hs_checkpoint_reader cpr;
   hs_init_checkpoint_reader(&cpr, cfg.output_path);
   hs_cleanup_checkpoints(&cpr, cfg.run_path, cfg.analysis_threads);
 
   hs_log(NULL, g_module, 6, "starting");
+
+#ifdef _WIN32
+  if(!SetConsoleCtrlHandler((PHANDLER_ROUTINE) CtrlHandler, TRUE)) {
+    printf("ERROR: watch signal failed, %s.\n", w32_error(GetLastError()));
+    return EXIT_FAILURE;
+  } 
+#else
   sigset_t signal_set;
   sigfillset(&signal_set);
   if (pthread_sigmask(SIG_SETMASK, &signal_set, NULL)) {
@@ -156,6 +301,7 @@ int main(int argc, char *argv[])
     hs_log(NULL, g_module, 1, "signal handler could not be setup");
     return EXIT_FAILURE;
   }
+#endif
 
   hs_input_plugins ips;
   hs_init_input_plugins(&ips, &cfg, &cpr);
@@ -172,7 +318,102 @@ int main(int argc, char *argv[])
 
   hs_checkpoint_writer cpw;
   hs_init_checkpoint_writer(&cpw, &ips, &aps, &ops, cfg.output_path);
+  
+#ifdef _WIN32
+  for (int i = 0; i < 3; i++) {
+    if (!readFs(&dirHandles[i])) {
+      printf("ERROR: read fs event failed, %s.\n", w32_error(GetLastError()));
+      return EXIT_FAILURE;
+    }
+  }
 
+  bool                     isRunning = true;
+  OVERLAPPED               *overlapped;
+  DWORD                    bytesReturned;
+  ULONG_PTR	               completionKey = 0;
+  FILE_NOTIFY_INFORMATION *info;
+  watcher_t               *w;
+  fsevent_t               *e;
+  shutdownEvent_t         *shutdownEvt;
+  char                     fileName[MAX_PATH+1];
+
+  while (isRunning) {
+    bytesReturned = 0;
+    memset(&overlapped, 0, sizeof(OVERLAPPED*));
+
+    if (!GetQueuedCompletionStatus(g_iocp, &bytesReturned, &completionKey, &overlapped, INFINITE)) {
+      if (GetLastError() != WAIT_TIMEOUT) {
+        printf("ERROR: read fs event failed, %s.\n", w32_error(GetLastError()));
+        isRunning = false;
+      }
+      continue;
+    }
+	w = (watcher_t *)overlapped;
+
+
+#define hs_load_file_dynamic(call, op)                                                                        \
+  for(info = (FILE_NOTIFY_INFORMATION *)(e->data);;                                                           \
+	info = (FILE_NOTIFY_INFORMATION *)( ((char*) e->data) + info->NextEntryOffset)) {                                    \
+      int size = WideCharToMultiByte(CP_ACP, 0, info->FileName,                                               \
+        info->FileNameLength / 2, fileName, MAX_PATH, NULL, NULL);                                            \
+      if (size <= 0) {                                                                                         \
+        printf("ERROR: WideCharToMultiByte failed, %s.\n",  w32_error(GetLastError()));                       \
+        isRunning = false;                                                                                    \
+        break;                                                                                                \
+      }                                                                                                       \
+      fileName[size] = '\0';                                                                                  \
+                                                                                                              \
+      char * slash = fileName;                                                                                \
+      while ((slash = strchr(slash, '\\')) != NULL) {                                                         \
+        *slash = '/';                                                                                         \
+      }                                                                                                       \
+                                                                                                              \
+      call(op, fileName);                                                                                     \
+      if(info->NextEntryOffset == 0) {                                                                        \
+         break;                                                                                               \
+      }                                                                                                       \
+    }
+
+    switch (w->eventId)  {
+    case IOCP_WEVENT_LOAD_PATH_INPUT:
+      e = (fsevent_t*)w;
+      hs_load_file_dynamic(hs_load_input_dynamic, &ips);
+
+      if (!readFs(&dirHandles[0])) {
+        printf("ERROR: read fs '%s' failed, %s.\n", cfg.load_path_input, w32_error(GetLastError()));
+        isRunning = false;
+      }
+      break;
+    case IOCP_WEVENT_LOAD_PATH_ANALYSIS:
+      e = (fsevent_t*)w;
+      hs_load_file_dynamic(hs_load_analysis_dynamic, &aps);
+
+      if (!readFs(&dirHandles[1])) {
+        printf("ERROR: read fs '%s' failed, %s.\n", cfg.load_path_analysis, w32_error(GetLastError()));
+        isRunning = false;
+      }
+      break;
+    case IOCP_WEVENT_LOAD_PATH_OUTPUT:
+      e = (fsevent_t*)w;
+      hs_load_file_dynamic(hs_load_output_dynamic, &ops);
+
+      if (!readFs(&dirHandles[2])) {
+        printf("ERROR: read fs '%s' failed, %s.\n", cfg.load_path_output, w32_error(GetLastError()));
+        isRunning = false;
+      }
+      break;
+    case IOCP_WEVENT_SHUTDOWN:
+	  shutdownEvt = (shutdownEvent_t*)w;
+	  free(shutdownEvt);
+      isRunning = false;
+      break;
+    default:
+      printf("ERROR: Unhandled eventId.\n");
+      isRunning = false;
+      break;
+    }
+  }
+#else
   struct timespec ts;
   const struct inotify_event *event;
   char inotify_buf[sizeof(struct inotify_event) + FILENAME_MAX + 1]
@@ -231,6 +472,7 @@ int main(int argc, char *argv[])
     }
     close(load);
   }
+#endif
   int rv = EXIT_SUCCESS;
 
 #ifdef HINDSIGHT_CLI
@@ -257,7 +499,9 @@ int main(int argc, char *argv[])
     rv |= 8;
   }
   hs_free_output_plugins(&ops);
+#ifndef _WIN32
   pthread_kill(sig_thread, SIGHUP);
+#endif
 #else
   // non CLI mode should shut everything down immediately
   hs_stop_input_plugins(&ips);
@@ -279,9 +523,20 @@ int main(int argc, char *argv[])
   hs_free_checkpoint_reader(&cpr);
   hs_free_config(&cfg);
 
+#ifndef _WIN32
   pthread_join(sig_thread, NULL);
+#endif
   hs_log(NULL, g_module, 6, "exiting");
   hs_free_log();
+
+#ifdef _WIN32
+  CloseHandle(g_iocp);
+  closeWatch(&dirHandles[0]);
+  closeWatch(&dirHandles[1]);
+  closeWatch(&dirHandles[2]);
+#else
   sem_destroy(&g_shutdown);
+#endif
+
   return rv;
 }

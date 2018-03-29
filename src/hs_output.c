@@ -9,7 +9,11 @@
 #include "hs_output.h"
 
 #include <ctype.h>
+#ifdef _WIN32
+#include "win_dirent.h"
+#else
 #include <dirent.h>
+#endif
 #include <errno.h>
 #include <luasandbox/lauxlib.h>
 #include <stdlib.h>
@@ -40,7 +44,7 @@ static size_t find_last_id(const char *path)
   unsigned long long file_id = 0, current_id = 0;
   struct dirent *entry;
   DIR *dp = opendir(path);
-  if (dp == NULL) return file_id;
+  if (dp == NULL) return (size_t)file_id;
 
   while ((entry = readdir(dp))) {
     if (extract_id(entry->d_name, &current_id)) {
@@ -50,9 +54,8 @@ static size_t find_last_id(const char *path)
     }
   }
   closedir(dp);
-  return file_id;
+  return (size_t)file_id;
 }
-
 
 void hs_init_output(hs_output *output, const char *path, const char *subdir)
 {
@@ -67,7 +70,17 @@ void hs_init_output(hs_output *output, const char *path, const char *subdir)
   snprintf(output->path, len, "%s/%s", path, subdir);
   output->cp.id = output->min_cp_id = find_last_id(output->path);
 
-  int ret = mkdir(path, S_IRUSR | S_IWUSR | S_IXUSR | S_IRGRP | S_IXGRP);
+#ifdef _WIN32
+  if (!CreateDirectoryA(path, NULL) && GetLastError() != ERROR_ALREADY_EXISTS) {
+    hs_log(NULL, g_module, 0, "output path could not be created: %s - %s", path, w32_error(GetLastError()));
+    exit(EXIT_FAILURE);
+  }
+  if (!CreateDirectoryA(output->path, NULL) && GetLastError() != ERROR_ALREADY_EXISTS) {
+    hs_log(NULL, g_module, 0, "output path could not be created: %s - %s", output->path, w32_error(GetLastError()));
+    exit(EXIT_FAILURE);
+  }
+#else
+  ret = mkdir(path, S_IRUSR | S_IWUSR | S_IXUSR | S_IRGRP | S_IXGRP);
   if (ret && errno != EEXIST) {
     hs_log(NULL, g_module, 0, "output path could not be created: %s", path);
     exit(EXIT_FAILURE);
@@ -78,6 +91,8 @@ void hs_init_output(hs_output *output, const char *path, const char *subdir)
     hs_log(NULL, g_module, 0, "output path could not be created: %s", output->path);
     exit(EXIT_FAILURE);
   }
+#endif
+
 
   if (pthread_mutex_init(&output->lock, NULL)) {
     perror("output lock pthread_mutex_init failed");
@@ -112,7 +127,11 @@ void hs_open_output_file(hs_output *output)
     hs_log(NULL, g_module, 0, "output filename exceeds %zu", sizeof(fqfn));
     exit(EXIT_FAILURE);
   }
+#ifdef _WIN32
+  output->fh = fopen(fqfn, "a+");
+#else
   output->fh = fopen(fqfn, "a+e");
+#endif
   if (!output->fh) {
     hs_log(NULL, g_module, 0, "%s: %s", fqfn, strerror(errno));
     exit(EXIT_FAILURE);

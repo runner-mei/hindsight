@@ -10,14 +10,24 @@
 
 #include <stdio.h>
 #include <string.h>
+#ifdef _WIN32
+#include <windows.h>
+#else
 #include <sys/vfs.h>
+#endif
 #include <time.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 
 
 bool hs_file_exists(const char *fn)
 {
+#ifdef _WIN32
+  FILE *fh = fopen(fn, "r");
+#else
   FILE *fh = fopen(fn, "re");
+#endif
   if (fh) {
     fclose(fh);
     return 1;
@@ -90,9 +100,17 @@ bool hs_has_ext(const char *fn, const char *ext)
 
 unsigned hs_disk_free_ob(const char *path, unsigned ob_size)
 {
+#ifdef _WIN32
+  ULARGE_INTEGER totalNumberOfFreeBytes;
+  if (GetDiskFreeSpaceEx(path, NULL, NULL, &totalNumberOfFreeBytes)) {
+    return 0;
+  }
+  return (unsigned)totalNumberOfFreeBytes.QuadPart;
+#else
   struct statfs buf;
   if (ob_size == 0 || statfs(path, &buf)) return 0;
   return buf.f_bsize * buf.f_bavail / ob_size;
+#endif
 }
 
 
@@ -109,11 +127,19 @@ void hs_save_termination_err(const hs_config *cfg,
                      pos + 1, hs_err_ext);
   if (ret < 0 || ret > (int)sizeof(fn) - 1) return;
 
+#ifdef _WIN32
+  FILE *fh = fopen(fn, "w");
+#else
   FILE *fh = fopen(fn, "we");
+#endif
   if (fh) {
     time_t t = time(NULL);
     struct tm tms;
+#ifdef _WIN32
+    if (gmtime_s(&tms, &t) == 0) {
+#else
     if (gmtime_r(&t, &tms)) {
+#endif
       fprintf(fh, "%04d-%02d-%02dT%02d:%02d:%02d\t%s\n",
               tms.tm_year + 1900, tms.tm_mon + 1, tms.tm_mday, tms.tm_hour,
               tms.tm_min, tms.tm_sec, err);

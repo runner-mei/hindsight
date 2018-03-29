@@ -32,7 +32,11 @@ bool hs_open_file(hs_input *hsi, const char *subdir, unsigned long long id)
   }
   if (hsi->fn && strcmp(hsi->fn, fqfn) == 0) return true;
 
+#ifdef _WIN32
+  FILE *fh = fopen(fqfn, "r");
+#else
   FILE *fh = fopen(fqfn, "re");
+#endif
   if (fh) {
     if (setvbuf(fh, NULL, _IONBF, 0)) {
       exit(EXIT_FAILURE);

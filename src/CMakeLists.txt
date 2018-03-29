@@ -16,6 +16,19 @@ hs_output_plugins.c
 hs_util.c
 )
 
+if(MSVC)
+set(HINDSIGHT_SRC ${HINDSIGHT_SRC}
+win_commons.h
+win_commons.c
+win_pthread.h
+win_pthread.c
+win_sem.h
+win_sem.c
+win_dirent.h
+win_dirent.c
+)
+endif()
+
 set(HINDSIGHT_LIBS
 ${LUASANDBOX_LIBRARIES}
 ${UNIX_LIBRARIES})
@@ -25,11 +38,20 @@ set(HINDSIGHT_LIBS
 ${LUASANDBOX_LIBRARIES}
 ${UNIX_LIBRARIES})
 
+if(MSVC)
+set(HINDSIGHT_LIBS ${HINDSIGHT_LIBS}
+Ws2_32.lib
+)
+endif()
+
+
+target_include_directories(hindsight  PRIVATE ${LUASANDBOX_INCLUDE_DIR})
 target_link_libraries(hindsight ${HINDSIGHT_LIBS})
 
 add_executable(hindsight_cli ${HINDSIGHT_SRC})
 
 target_compile_definitions(hindsight_cli PUBLIC "-DHINDSIGHT_CLI")
+target_include_directories(hindsight_cli  PRIVATE ${LUASANDBOX_INCLUDE_DIR})
 target_link_libraries(hindsight_cli ${HINDSIGHT_LIBS})
 
 install(TARGETS hindsight DESTINATION ${CMAKE_INSTALL_BINDIR})

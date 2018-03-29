@@ -11,7 +11,11 @@
 
 #include <assert.h>
 #include <ctype.h>
+#ifdef _WIN32
+#include "win_dirent.h"
+#else
 #include <dirent.h>
+#endif
 #include <errno.h>
 #include <luasandbox.h>
 #include <luasandbox/lauxlib.h>
@@ -19,14 +23,20 @@
 #include <luasandbox/util/protobuf.h>
 #include <luasandbox_output.h>
 #include <math.h>
+#ifdef _WIN32
+#include "win_pthread.h"
+#else
 #include <pthread.h>
+#endif
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
 #include <time.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 
 #include "hs_logger.h"
 #include "hs_util.h"
@@ -184,7 +194,12 @@ static int inject_message(void *parent,
   pthread_mutex_unlock(&p->plugins->output.lock);
 
   if (bp) {
-    usleep(100000); // throttle to 10 messages per second
+#ifdef _WIN32
+	Sleep(100); // throttle to 10 messages per second
+#else
+	usleep(100000); // throttle to 10 messages per second
+#endif // _WIN32
+
   }
   return rv;
 }
@@ -385,13 +400,18 @@ static void* input_thread(void *arg)
     }
     if (ret > 0 && p->shutdown_terminate) {
       hs_log(NULL, p->name, 6, "shutting down on terminate");
+#ifdef _WIN32
+      ExitProcess(EXIT_FAILURE);
+#else
       kill(getpid(), SIGTERM);
+#endif
     }
     destroy_input_plugin(p);
     --plugins->list_cnt;
     pthread_mutex_unlock(&plugins->list_lock);
   }
   pthread_exit(NULL);
+  return NULL;
 }
 
 

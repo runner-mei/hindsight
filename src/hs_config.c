@@ -15,7 +15,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
+#include "win_commons.h"
+#else
 #include <unistd.h>
+#endif
 
 #include "hs_logger.h"
 #include "hs_util.h"
@@ -116,7 +120,11 @@ static void init_config(hs_config *cfg)
   cfg->max_message_size = 1024 * 64;
   cfg->backpressure = 0;
   cfg->backpressure_df = 4;
+#ifdef _WIN32
+  cfg->pid = (int)GetCurrentProcessId();
+#else
   cfg->pid = (int)getpid();
+#endif
   init_sandbox_config(&cfg->ipd);
   init_sandbox_config(&cfg->apd);
   init_sandbox_config(&cfg->opd);
@@ -634,6 +642,7 @@ int hs_load_config(const char *fn, hs_config *cfg)
   }
 
   size_t len = strlen(cfg->load_path) + strlen(hs_input_dir) + 2;
+
   cfg->load_path_input = malloc(len);
   if (!cfg->load_path_input) {
     lua_pushfstring(L, "load_path_input malloc failed");
@@ -907,10 +916,17 @@ bool hs_output_runtime_cfg(lsb_output_buffer *ob, char type, const hs_config *cf
   // just test the last write to make sure the buffer wasn't exhausted
   lsb_err_value ret = lsb_outputf(ob, "-- end Hindsight configuration\n");
 
-  char fn[strlen(cfg->output_path) + strlen(sbc->cfg_name) +
-    strlen(hs_rtc_ext) + 2];
-  snprintf(fn, sizeof(fn), "%s/%s%s", cfg->output_path, sbc->cfg_name, hs_rtc_ext);
+
+  size_t capacity = strlen(cfg->output_path) + strlen(sbc->cfg_name) +
+	  strlen(hs_rtc_ext) + 2;
+  char *fn = (char *)alloca(capacity);
+  snprintf(fn, capacity, "%s/%s%s", cfg->output_path, sbc->cfg_name, hs_rtc_ext);
+
+#ifdef _WIN32
+  FILE *fh = fopen(fn, "w");
+#else
   FILE *fh = fopen(fn, "we");
+#endif
   if (!fh) return false;
   fwrite(ob->buf, ob->pos, 1, fh);
   fclose(fh);

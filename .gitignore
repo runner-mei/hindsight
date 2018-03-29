@@ -1,2 +1,5 @@
 release/
 gh-pages/
+win_build/
+windows_build/
+Win32

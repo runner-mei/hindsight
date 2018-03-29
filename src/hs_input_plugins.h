@@ -10,8 +10,13 @@
 #define hs_input_plugins_h_
 
 #include <luasandbox/heka/sandbox.h>
+#ifdef _WIN32
+#include "win_pthread.h"
+#include "win_sem.h"
+#else
 #include <pthread.h>
 #include <semaphore.h>
+#endif
 #include <stddef.h>
 
 #include "hs_config.h"

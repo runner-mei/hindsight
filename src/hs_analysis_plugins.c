@@ -9,20 +9,29 @@
 #include "hs_analysis_plugins.h"
 
 #include <ctype.h>
+#ifdef _WIN32
+#include "win_dirent.h"
+#else
 #include <dirent.h>
+#endif
 #include <errno.h>
 #include <luasandbox.h>
 #include <luasandbox/lauxlib.h>
 #include <luasandbox/util/protobuf.h>
 #include <luasandbox_output.h>
+#ifdef _WIN32
+#include "win_pthread.h"
+#else
 #include <pthread.h>
+#endif
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
 #include <time.h>
+#ifndef _WIN32
 #include <unistd.h>
-
+#endif
 #include "hs_input.h"
 #include "hs_logger.h"
 #include "hs_output.h"
@@ -92,7 +101,12 @@ static int inject_message(void *parent, const char *pb, size_t pb_len)
   pthread_mutex_unlock(&p->at->plugins->output.lock);
 
   if (bp) {
-    usleep(100000); // throttle to 10 messages per second
+#ifdef _WIN32
+	Sleep(100); // throttle to 10 messages per second
+#else
+	usleep(100000); // throttle to 10 messages per second
+#endif // _WIN32
+
   }
   return LSB_HEKA_IM_SUCCESS;
 }
@@ -359,7 +373,12 @@ static void terminate_sandbox(hs_analysis_thread *at, int i)
   hs_save_termination_err(at->plugins->cfg, at->list[i]->name, err);
   if (at->list[i]->shutdown_terminate) {
     hs_log(NULL, at->list[i]->name, 6, "shutting down on terminate");
+#ifdef _WIN32
+    ExitProcess(EXIT_FAILURE);
+#else
     kill(getpid(), SIGTERM);
+#endif
+
   }
   remove_plugin(at, i);
 }
@@ -527,13 +546,19 @@ static void* input_thread(void *arg)
         pthread_mutex_unlock(&at->cp_lock);
       }
       at->msg = NULL;
-      sleep(1);
+#ifdef _WIN32
+	  Sleep(1000);
+#else
+	  sleep(1);
+#endif // _WIN32
+
     }
   }
   shutdown_timer_event(at);
   lsb_free_heka_message(&msg);
   hs_log(NULL, g_module, 6, "exiting thread: %d", at->tid);
   pthread_exit(NULL);
+  return NULL;
 }
 
 
@@ -699,8 +724,8 @@ static unsigned get_tid(const char *path, const char *name)
 static unsigned get_previous_tid(const char *opath, const char *name)
 {
   size_t len = strlen(hs_analysis_dir) + strlen(name) + 1;
-  char rtc[len + 1];
-  snprintf(rtc, sizeof(rtc), "%s.%s", hs_analysis_dir, name);
+  char *rtc = (char*) _alloca((len + 1) * sizeof(char));
+  snprintf(rtc, (len + 1) * sizeof(char), "%s.%s", hs_analysis_dir, name);
   strcpy(rtc + len - HS_EXT_LEN, hs_rtc_ext);
   return get_tid(opath, rtc);
 }
@@ -709,7 +734,7 @@ static unsigned get_previous_tid(const char *opath, const char *name)
 void hs_load_analysis_startup(hs_analysis_plugins *plugins)
 {
   const int threads = plugins->thread_cnt;
-  int plugins_per_thread[threads];
+  int *plugins_per_thread = (int *)_alloca(threads * sizeof(int));
   memset(plugins_per_thread, 0, sizeof(int) * threads);
 
   hs_config *cfg = plugins->cfg;

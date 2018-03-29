@@ -9,7 +9,11 @@
 #include "hs_checkpoint_reader.h"
 
 #include <ctype.h>
+#ifdef _WIN32
+#include "win_dirent.h"
+#else
 #include <dirent.h>
+#endif
 #include <errno.h>
 #include <inttypes.h>
 #include <luasandbox/lauxlib.h>
@@ -40,6 +44,7 @@ static bool extract_id(const char *fn, unsigned long long *id)
 static size_t find_first_id(const char *path)
 {
   struct dirent *entry;
+
   DIR *dp = opendir(path);
   if (dp == NULL) {
     hs_log(NULL, g_module, 0, "path does not exist: %s", path);
@@ -55,7 +60,7 @@ static size_t find_first_id(const char *path)
     }
   }
   closedir(dp);
-  return file_id == ULLONG_MAX ? 0 : file_id;
+  return file_id == ULLONG_MAX ? 0 : (size_t)file_id;
 }
 
 

@@ -13,7 +13,11 @@
 #include <luasandbox/util/heka_message.h>
 #include <luasandbox/util/heka_message_matcher.h>
 #include <luasandbox/util/running_stats.h>
+#ifdef _WIN32
+#include "win_pthread.h"
+#else
 #include <pthread.h>
+#endif
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>

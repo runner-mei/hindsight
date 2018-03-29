@@ -10,7 +10,11 @@
 #define hs_checkpoint_reader_h_
 
 #include <luasandbox/lua.h>
+#ifdef _WIN32
+#include "win_pthread.h"
+#else
 #include <pthread.h>
+#endif
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
