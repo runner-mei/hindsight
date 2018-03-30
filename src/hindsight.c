@@ -109,8 +109,6 @@ bool readFs(fsevent_t *evt) {
     NULL);
 }
 
-
-
 BOOL CtrlHandler(DWORD fdwCtrlType) {
 	shutdownEvent_t *evt;
 	switch (fdwCtrlType) {
@@ -341,10 +339,12 @@ int main(int argc, char *argv[])
     bytesReturned = 0;
     memset(&overlapped, 0, sizeof(OVERLAPPED*));
 
-    if (!GetQueuedCompletionStatus(g_iocp, &bytesReturned, &completionKey, &overlapped, INFINITE)) {
+    if (!GetQueuedCompletionStatus(g_iocp, &bytesReturned, &completionKey, &overlapped, 1000)) {
       if (GetLastError() != WAIT_TIMEOUT) {
         printf("ERROR: read fs event failed, %s.\n", w32_error(GetLastError()));
         isRunning = false;
+      } else {
+         hs_write_checkpoints(&cpw, &cpr);
       }
       continue;
     }
